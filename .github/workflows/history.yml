@@ -38,7 +38,7 @@ jobs:
 
       - name: Build history files
         env:
-          FULL: ${{ github.event.inputs.full == '1' && '1' || '0' }}
+          FULL: ${{ (github.event.inputs.full == '1' || github.event.schedule == '0 11 * * 0') && '1' || '0' }}
           CONC: '3'
         run: node scripts/build-history.mjs
 
