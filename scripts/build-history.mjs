@@ -8,6 +8,7 @@ const CONC = Number(process.env.CONC || 2);
 const FULL = process.env.FULL === '1';
 const UT = 'fa5fd1943c7b386f172d6893dbfba10b';
 const OWNER_REPO = process.env.OWNER_REPO || 'pengxh7788/stock-data';
+const DAILY_DAYS = 60;   // 日线分片保留天数（全市场筛选用）
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36',
@@ -162,11 +163,17 @@ async function main() {
 
   const calendar = await buildCalendar();
   await writeJson(path.join(OUT, 'calendar.json'), calendar);
+
+  const dailyDays = calendar.tradingDays.slice(-DAILY_DAYS);
+  await buildDailyShards(dailyDays);
   await writeJson(path.join(OUT, 'manifest.json'), {
     updatedAt: new Date().toISOString(),
     lastTradingDate: calendar.lastTradingDate,
     klineCount,
     flowCount,
+    dailyDays: dailyDays.length,
+    dailyFrom: dailyDays[0],
+    dailyTo: dailyDays[dailyDays.length - 1],
     missing: missing.slice(0, 300),
   });
 
@@ -179,3 +186,39 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+
+// 把逐票 K 线反转成「按天」的全市场分片，供 APP 一次拉全市场做筛选。
+async function buildDailyShards(days) {
+  const daySet = new Set(days);
+  const map = new Map(days.map((d) => [d, {}]));
+  let files = [];
+  try {
+    files = await fs.readdir(path.join(OUT, 'kline'));
+  } catch {
+    return;
+  }
+  let done = 0;
+  await pool(files, 24, async (f) => {
+    if (!f.endsWith('.json')) return;
+    const data = await readJson(path.join(OUT, 'kline', f));
+    if (!data?.bars?.length) return;
+    for (const b of data.bars) {
+      if (!daySet.has(b[0])) continue;
+      map.get(b[0])[data.code] = [b[1], b[2], b[3], b[4], b[5], b[6]];
+    }
+    if (++done % 1000 === 0) console.log(`[daily] ${done}/${files.length}`);
+  });
+
+  for (const d of days) {
+    await writeJson(path.join(OUT, 'daily', `${d}.json`), { date: d, bars: map.get(d) });
+  }
+
+  // 清理超出窗口的旧分片
+  const keep = new Set(days.map((d) => `${d}.json`));
+  try {
+    for (const f of await fs.readdir(path.join(OUT, 'daily'))) {
+      if (!keep.has(f)) await fs.rm(path.join(OUT, 'daily', f), { force: true });
+    }
+  } catch {}
+  console.log(`[daily] shards=${days.length} ${days[0]}..${days[days.length - 1]}`);
+}
