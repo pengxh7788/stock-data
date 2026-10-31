@@ -8,7 +8,7 @@ const CONC = Number(process.env.CONC || 2);
 const FULL = process.env.FULL === '1';
 const UT = 'fa5fd1943c7b386f172d6893dbfba10b';
 const OWNER_REPO = process.env.OWNER_REPO || 'pengxh7788/stock-data';
-const DAILY_DAYS = 60;   // 日线分片保留天数（全市场筛选用）
+const DAILY_DAYS = 60;   // 日线/资金流分片保留天数（全市场筛选用）
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36',
@@ -166,6 +166,7 @@ async function main() {
 
   const dailyDays = calendar.tradingDays.slice(-DAILY_DAYS);
   await buildDailyShards(dailyDays);
+  await buildFlowShards(dailyDays);
   await writeJson(path.join(OUT, 'manifest.json'), {
     updatedAt: new Date().toISOString(),
     lastTradingDate: calendar.lastTradingDate,
@@ -174,6 +175,7 @@ async function main() {
     dailyDays: dailyDays.length,
     dailyFrom: dailyDays[0],
     dailyTo: dailyDays[dailyDays.length - 1],
+    flowDailyDays: dailyDays.length,
     missing: missing.slice(0, 300),
   });
 
@@ -221,4 +223,37 @@ async function buildDailyShards(days) {
     }
   } catch {}
   console.log(`[daily] shards=${days.length} ${days[0]}..${days[days.length - 1]}`);
+}
+
+// 把逐票资金流反转成「按天」的全市场分片，供 APP 全市场筛资金流条件。
+async function buildFlowShards(days) {
+  const daySet = new Set(days);
+  const map = new Map(days.map((d) => [d, {}]));
+  let files = [];
+  try {
+    files = await fs.readdir(path.join(OUT, 'flow'));
+  } catch {
+    return;
+  }
+  await pool(files, 24, async (f) => {
+    if (!f.endsWith('.json')) return;
+    const data = await readJson(path.join(OUT, 'flow', f));
+    if (!data?.flow?.length) return;
+    for (const x of data.flow) {
+      if (!daySet.has(x[0])) continue;
+      map.get(x[0])[data.code] = [x[1], x[2], x[3], x[4], x[5]];
+    }
+  });
+
+  for (const d of days) {
+    await writeJson(path.join(OUT, 'flow_daily', `${d}.json`), { date: d, flow: map.get(d) });
+  }
+
+  const keep = new Set(days.map((d) => `${d}.json`));
+  try {
+    for (const f of await fs.readdir(path.join(OUT, 'flow_daily'))) {
+      if (!keep.has(f)) await fs.rm(path.join(OUT, 'flow_daily', f), { force: true });
+    }
+  } catch {}
+  console.log(`[flow_daily] shards=${days.length}`);
 }
