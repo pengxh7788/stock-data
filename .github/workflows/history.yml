@@ -3,7 +3,7 @@ name: update-history
 on:
   schedule:
     # UTC 09:00 = 北京 17:00（A股收盘后）
-    - cron: '30 10 * * 1-5'
+    - cron: '0 9 * * 1-5'
   workflow_dispatch:
     inputs:
       full:
