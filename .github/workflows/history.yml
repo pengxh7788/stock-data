@@ -39,7 +39,7 @@ jobs:
       - name: Build history files
         env:
           FULL: ${{ (github.event.inputs.full == '1' || github.event.schedule == '0 11 * * 0') && '1' || '0' }}
-          CONC: '3'
+          CONC: '6'
         run: node scripts/build-history.mjs
 
       - name: 保存中间结果缓存（失败也保存，下次续跑）
