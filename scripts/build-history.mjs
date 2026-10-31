@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const OUT = 'out';
-const CONC = Number(process.env.CONC || 2);
+const CONC = Number(process.env.CONC || 6);
 const FULL = process.env.FULL === '1';
 const UT = 'fa5fd1943c7b386f172d6893dbfba10b';
 const OWNER_REPO = process.env.OWNER_REPO || 'pengxh7788/stock-data';
@@ -18,16 +18,16 @@ const HEADERS = {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const secid = (code) => `${/^(sh|6)/.test(code) ? 1 : 0}.${code.replace(/^\D+/, '')}`;
 
-async function getJson(url, retry = 3) {
+async function getJson(url, retry = 1) {
   for (let i = 0; i <= retry; i++) {
     try {
-      const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(12000) });
+      const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(8000) });
       if (res.status === 429) throw new Error('HTTP 429');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.json();
     } catch (err) {
       if (i === retry) throw err;
-      await sleep(600 * (i + 1) + Math.random() * 400);
+      await sleep(400 * (i + 1) + Math.random() * 200);
     }
   }
 }
@@ -87,7 +87,7 @@ async function pool(items, n, fn) {
       while (cursor < items.length) {
         const idx = cursor++;
         await fn(items[idx], idx);
-        await sleep(80);
+        await sleep(30);
       }
     }),
   );
@@ -121,6 +121,7 @@ async function main() {
   const codes = Object.keys(quotes.quotes).filter((c) => /^(sh|sz|bj)\d{6}$/.test(c));
   console.log(`[history] codes=${codes.length} full=${FULL}`);
 
+  const T0 = Date.now();
   const missing = [];
   let klineCount = 0;
   let flowCount = 0;
@@ -147,7 +148,7 @@ async function main() {
 
     try {
       const flow = mergeByDate(
-        [...(oldF?.flow || []), ...(await fetchFlow(code, oldF ? 10 : 120))],
+        [...(oldF?.flow || []), ...(await fetchFlow(code, oldF ? 5 : 60))],
         250,
       );
       if (flow.length) {
@@ -158,7 +159,7 @@ async function main() {
       /* 资金流失败不影响 K 线，下次再补 */
     }
 
-    if (++done % 200 === 0) console.log(`[history] ${done}/${codes.length}`);
+    if (++done % 200 === 0) console.log(`[history] ${done}/${codes.length} ${Math.round((Date.now()-T0)/1000)}s`);
   });
 
   const calendar = await buildCalendar();
