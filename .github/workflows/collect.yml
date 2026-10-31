@@ -1,0 +1,131 @@
+name: collect-quotes
+
+on:
+  schedule:
+    - cron: '35 8 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: collect-data
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 恢复采集状态缓存
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: collector-state-${{ github.run_id }}
+          restore-keys: |
+            collector-state-
+
+      - name: 缓存缺失时从 archive 分支恢复（完整历史，不重爬）
+        run: |
+          set -e
+          if [ -f data/history.json ] && [ -f data/lhb.json ]; then
+            echo "缓存命中，跳过 archive 恢复"
+            exit 0
+          fi
+          echo "缓存缺失，尝试从 archive 分支恢复"
+          rm -rf /tmp/arch
+          git clone --depth 1 --branch archive \
+            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" \
+            /tmp/arch || { echo "archive 分支不存在，首次运行将全量采集"; exit 0; }
+          mkdir -p data
+          for gz in /tmp/arch/*.json.gz; do
+            [ -e "$gz" ] || continue
+            name=$(basename "$gz" .gz)
+            case "$name" in
+              meta.json|quotes.json|analysis.json) continue ;;
+            esac
+            gunzip -c "$gz" > "data/$name"
+            echo "恢复 data/$name"
+          done
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 采集行情
+        run: python3 collect.py
+
+      - name: 校验数据（不合格则中止，不推送坏数据）
+        run: python3 verify_dataset.py
+
+      - name: 保存采集状态缓存
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: collector-state-${{ github.run_id }}
+
+      - name: 归档中间数据到 archive 分支（gzip，完整留存）
+        run: |
+          set -e
+          rm -rf /tmp/arch && mkdir -p /tmp/arch
+          for f in data/*.json; do
+            base=$(basename "$f")
+            case "$base" in
+              meta.json|quotes.json|analysis.json) continue ;;
+            esac
+            gzip -9 -c "$f" > "/tmp/arch/${base}.gz"
+          done
+          if [ -f data/last_error.txt ]; then cp data/last_error.txt /tmp/arch/; fi
+
+          cd /tmp/arch
+          git init -q
+          git config user.name  "archive-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add -A
+          git commit -qm "archive $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push -f -q \
+            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" \
+            HEAD:archive
+          echo "archive 分支已更新"
+
+      - name: 保存 app 快照备份
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-snapshot
+          path: |
+            data/meta.json
+            data/quotes.json
+            data/analysis.json
+          retention-days: 3
+
+      - name: 提交数据（main 只保留 app 用到的 3 个文件）
+        run: |
+          set -e
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          find data -maxdepth 1 -type f ! -name 'meta.json' ! -name 'quotes.json' ! -name 'analysis.json' -delete
+
+          git checkout --orphan data-snapshot
+          git rm -rf --cached . > /dev/null 2>&1 || true
+
+          git fetch --depth=1 origin main:refs/remotes/origin/main > /dev/null 2>&1 || true
+          for f in .github/workflows/collect.yml collect.py verify_dataset.py; do
+            git show origin/main:$f > $f 2>/dev/null || true
+          done
+
+          git add -A
+          git commit -m "data: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          git branch -D main || true
+          git branch -m data-snapshot main
+          git push -f origin main
+
+          echo "完成：main 只含 meta/quotes/analysis，其余在 archive 分支"

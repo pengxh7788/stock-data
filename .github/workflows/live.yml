@@ -1,0 +1,48 @@
+name: live-quotes
+
+# 只在 A 股交易时段跑（UTC）：
+#   09:30-11:30 CST = 01:30-03:30 UTC
+#   13:00-15:00 CST = 05:00-07:00 UTC
+on:
+  schedule:
+    - cron: '*/10 1-3,5-7 * * 1-5'
+  workflow_dispatch:
+
+concurrency:
+  group: live-quotes
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码（含 data/quotes.json）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 抓实时行情
+        run: python3 live.py
+
+      - name: 发布到 live 分支（覆盖式，仓库体积恒定）
+        run: |
+          set -e
+          mkdir -p /tmp/live/data
+          cp data/live.json /tmp/live/data/live.json
+          cd /tmp/live
+          git init -q
+          git config user.email "actions@github.com"
+          git config user.name "live-bot"
+          git add -A
+          git commit -qm "live $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -f -q "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" HEAD:live
+          echo "已发布 live 分支"

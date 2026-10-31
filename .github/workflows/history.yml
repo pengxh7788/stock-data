@@ -1,0 +1,56 @@
+name: update-history
+
+on:
+  schedule:
+    # UTC 09:00 = 北京 17:00（A股收盘后）
+    - cron: '30 10 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      full:
+        description: '全量回填 250 天（首次/每周复用）'
+        required: false
+        default: '0'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-history
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: out
+          key: history-${{ github.run_id }}
+          restore-keys: |
+            history-
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build history files
+        env:
+          FULL: ${{ github.event.inputs.full == '1' && '1' || '0' }}
+          CONC: '2'
+        run: node scripts/build-history.mjs
+
+      - name: Push history branch (orphan + force)
+        run: |
+          set -e
+          git config user.name  "history-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git checkout --orphan history-new
+          git rm -rf . >/dev/null 2>&1 || true
+          cp -r out/. .
+          rm -rf out
+          git add -A
+          git commit -m "history $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push --force origin HEAD:history
