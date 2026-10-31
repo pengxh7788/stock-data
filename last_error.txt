@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/home/runner/work/stock-data/stock-data/collect.py", line 1635, in <module>
+    main()
+  File "/home/runner/work/stock-data/stock-data/collect.py", line 1572, in main
+    build_lhb(hist["dates"])
+  File "/home/runner/work/stock-data/stock-data/collect.py", line 1104, in build_lhb
+    want = [d for d in dates[-LHB_KEEP:] if d not in oldmap]
+                              ^^^^^^^^
+NameError: name 'LHB_KEEP' is not defined
