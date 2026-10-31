@@ -21,7 +21,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
 
@@ -39,8 +39,15 @@ jobs:
       - name: Build history files
         env:
           FULL: ${{ github.event.inputs.full == '1' && '1' || '0' }}
-          CONC: '2'
+          CONC: '3'
         run: node scripts/build-history.mjs
+
+      - name: 保存中间结果缓存（失败也保存，下次续跑）
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: out
+          key: history-${{ github.run_id }}
 
       - name: Push history branch (orphan + force)
         run: |
