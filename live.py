@@ -59,20 +59,21 @@ def load_codes():
     except Exception:
         pass
     # 兜底：从 history 分支最近一个交易日的 daily 文件里取全市场代码
-    try:
-        base = "https://raw.githubusercontent.com/pengxh7788/stock-data/history"
-        man = json.loads(urllib.request.urlopen(
-            urllib.request.Request(base + "/manifest.json", headers=UA), timeout=20
-        ).read().decode("utf-8"))
-        d = man["lastTradingDate"]
-        bars = json.loads(urllib.request.urlopen(
-            urllib.request.Request(f"{base}/daily/{d}.json", headers=UA), timeout=30
-        ).read().decode("utf-8"))["bars"]
-        codes = sorted(bars.keys())
-        print(f"[输入] history/daily/{d}.json {len(codes)} 只")
-        return codes
-    except Exception as e:
-        print(f"[输入] 远程名单失败: {e}")
+    for base in ("https://gh-proxy.com/https://raw.githubusercontent.com/pengxh7788/stock-data/history",
+                 "https://raw.githubusercontent.com/pengxh7788/stock-data/history"):
+        try:
+            man = json.loads(urllib.request.urlopen(
+                urllib.request.Request(base + "/manifest.json", headers=UA), timeout=25
+            ).read().decode("utf-8"))
+            d = man["lastTradingDate"]
+            bars = json.loads(urllib.request.urlopen(
+                urllib.request.Request(f"{base}/daily/{d}.json", headers=UA), timeout=40
+            ).read().decode("utf-8"))["bars"]
+            codes = sorted(bars.keys())
+            print(f"[输入] {base.split('/')[2]} daily/{d}.json {len(codes)} 只")
+            return codes
+        except Exception as e:
+            print(f"[输入] 远程名单失败({base.split('/')[2]}): {e}")
     return []
 
 
