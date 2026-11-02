@@ -133,12 +133,15 @@ def prune(today):
 
 
 def main():
+    force = "--force" in sys.argv
     t = cst_now()
-    if not in_session(t):
+    if not force and not in_session(t):
         print(f"[跳过] {t.tm_hour:02d}:{t.tm_min:02d} 非交易时段")
         return
 
     date = time.strftime("%Y-%m-%d", t)
+    if force:
+        print("[强制] 忽略交易时段")
     label = bucket_of(t)
     snap_path = os.path.join(SNAP, f"{date}_{label}.json")
 
