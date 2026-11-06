@@ -1,0 +1,90 @@
+name: update-history
+
+on:
+  schedule:
+    # 2026-11-04 调整：收盘后立刻生成当日日K。
+    # 原因：原来最早 18:30 才生成，且单点触发被 GitHub 丢弃时当天就永久缺一天。
+    # 现在 15:05 主跑 + 15:35/16:30 两次兜底，任一次跑成即可，脚本本身幂等。
+    - cron: '5 7 * * 1-5'     # 15:05 收盘后主跑（当日日K定稿后第一时间）
+    - cron: '35 7 * * 1-5'    # 15:35 兜底
+    - cron: '30 8 * * 1-5'    # 16:30 二次兜底
+    - cron: '30 10 * * 1-5'   # 交易日 18:30 增量
+    - cron: '15 */3 * * *'    # 每 3 小时补一批资金流（后台慢慢补满）
+    - cron: '0 11 * * 0'      # 周日 19:00 全量刷新
+  workflow_dispatch:
+    inputs:
+      full:
+        description: '全量（逐票补资金流历史）'
+        required: false
+        default: '0'
+      bs_limit:
+        description: 'Baostock 只跑前 N 只（测试用，0=全部）'
+        required: false
+        default: '0'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-history
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: out
+          key: history-${{ github.run_id }}
+          restore-keys: |
+            history-
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装 Baostock
+        if: ${{ github.event.inputs.full == '1' || github.event.schedule == '0 11 * * 0' }}
+        run: pip install -q baostock
+
+      - name: Baostock 校正成交额与换手率（全量时）
+        if: ${{ github.event.inputs.full == '1' || github.event.schedule == '0 11 * * 0' }}
+        env:
+          BAOSTOCK_LIMIT: ${{ github.event.inputs.bs_limit || '0' }}
+        run: python scripts/baostock_sync.py
+
+      - name: Build history files
+        env:
+          FULL: ${{ (github.event.inputs.full == '1' || github.event.schedule == '0 11 * * 0') && '1' || '0' }}
+          KLINE_CONC: '8'
+          FLOW_CONC: '3'
+          FLOW_BATCH: '2000'
+        run: node scripts/build-history.mjs
+
+      - name: 保存中间结果缓存（失败也保存，下次续跑）
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: out
+          key: history-${{ github.run_id }}
+
+      - name: Push history branch (orphan + force)
+        run: |
+          set -e
+          git config user.name  "history-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git checkout --orphan history-new
+          git rm -rf . >/dev/null 2>&1 || true
+          cp -r out/. .
+          rm -rf out
+          git add -A
+          git commit -m "history $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push --force origin HEAD:history

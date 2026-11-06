@@ -1,0 +1,43 @@
+name: data-watchdog
+
+# 数据自愈守护：收盘后检查「今日日K」「首页快照包」有没有生成，
+# 缺了就用 workflow_dispatch 叫醒对应的采集 workflow。
+# 存在原因：GitHub 的 schedule 会被丢弃（2026-11-04 当天 07:00Z/07:15Z/07:26Z 三个全丢，
+# 仓库因此缺了一整天日K）。本 workflow 用仓库自带的 GITHUB_TOKEN dispatch，
+# 不需要外部账号，也不需要 PAT。
+#
+# 注意：GITHUB_TOKEN 触发的 workflow_dispatch 属于官方例外，会正常创建运行。
+
+on:
+  schedule:
+    - cron: '10 1 * * 1-5'      # 09:10 盘前：确认昨天的数据已到位
+    - cron: '*/20 7-10 * * 1-5' # 15:00-18:40 每 20 分钟：盯当天
+    - cron: '10 12 * * 1-5'     # 20:10 收尾
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: data-watchdog
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 检查并自愈
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER_REPO: ${{ github.repository }}
+        run: python3 scripts/watchdog.py
