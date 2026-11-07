@@ -12,6 +12,7 @@ on:
   schedule:
     - cron: '10 1 * * 1-5'      # 09:10 盘前：确认昨天的数据已到位
     - cron: '*/20 7-10 * * 1-5' # 15:00-18:40 每 20 分钟：盯当天
+    - cron: '22 7 * * 1-5'      # 15:22 收盘后 20 分钟 SLA 检查
     - cron: '10 12 * * 1-5'     # 20:10 收尾
   workflow_dispatch:
 
@@ -35,6 +36,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: SLA 检查（收盘后 20 分钟内必须有当日数据）
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER_REPO: ${{ github.repository }}
+        run: python3 scripts/sla_check.py
 
       - name: 检查并自愈
         env:
