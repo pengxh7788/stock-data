@@ -4,6 +4,8 @@ name: collect-quotes
 #   15:01 主跑（约 19 分钟出数据）  |  15:26 兜底（主跑漏跑/延迟时补上，已有当天数据则直接跳过）
 on:
   schedule:
+    - cron: '0 6 * * 1-5'     # 北京 14:00 提前启动（内部等收盘，躲开 GitHub 定时漂移）
+    - cron: '30 6 * * 1-5'    # 北京 14:30 第二个提前启动点
     - cron: '0 7 * * 1-5'     # 北京 15:00 收盘即采（UTC 07:00）
     - cron: '26 7 * * 1-5'    # 北京 15:26 兜底
     - cron: '50 7 * * 1-5'    # 北京 15:50 兜底（前两次被 GitHub 丢弃时补）
@@ -37,6 +39,16 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: 等收盘数据就绪（15:02 前不采）
+        run: |
+          TARGET=$(date -d "$(date +%Y-%m-%d) 15:02" +%s)
+          NOW=$(date +%s)
+          if [ "$NOW" -lt "$TARGET" ]; then
+            echo "现在 $(date +%H:%M)，等到 15:02 再采（距收盘数据就绪 $(( (TARGET-NOW)/60 )) 分钟）"
+            while [ "$(date +%s)" -lt "$TARGET" ]; do sleep 30; done
+          fi
+          echo "开始采集 $(date +%H:%M:%S)"
 
       - name: 今天是否已采过（兜底触发时跳过）
         id: guard
