@@ -34,15 +34,30 @@ def api(path, data=None, method=None):
         return json.loads(r.read())
 
 
+def is_trading_day(day: str) -> bool:
+    """用仓库日历判断；拿不到日历就退回周末判断"""
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{REPO}/contents/calendar.json?ref=history",
+            headers={"Authorization": "Bearer " + GH, "Accept": "application/vnd.github.raw",
+                     "User-Agent": "sla"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            cal = json.loads(r.read().decode("utf-8"))
+        return day in set(cal.get("tradingDays") or [])
+    except Exception as e:
+        print(f"[sla] 日历读取失败({e})，退回周末判断")
+        return datetime.strptime(day, "%Y-%m-%d").weekday() < 5
+
+
 def main():
     now = datetime.now(CST)
-    if now.weekday() >= 5:
-        print(f"[sla] {now:%Y-%m-%d} 周末，跳过")
+    today = now.strftime("%Y-%m-%d")
+    if not is_trading_day(today):
+        print(f"[sla] {today} 非交易日（节假日/周末），跳过检查")
         return 0
 
     close = now.replace(hour=CLOSE_H, minute=CLOSE_M, second=0, microsecond=0)
     deadline = close + timedelta(minutes=SLA_MIN)
-    today = now.strftime("%Y-%m-%d")
 
     # 今天最早启动的那次运行
     first = None

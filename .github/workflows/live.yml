@@ -54,6 +54,11 @@ jobs:
             exit 0
           fi
 
+          if ! python3 scripts/trading_day.py; then
+            echo "非交易日，盘中桶任务直接结束"
+            exit 0
+          fi
+
           END=$(date -d "$(date +%Y-%m-%d) 15:06" +%s)
           echo "开始 $(date +%H:%M)，计划到 15:06 结束"
 

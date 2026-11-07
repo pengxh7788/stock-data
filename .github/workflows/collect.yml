@@ -40,6 +40,19 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: 今天是否交易日（非交易日直接停下）
+        id: cal
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER_REPO: ${{ github.repository }}
+        run: |
+          if python3 scripts/trading_day.py; then
+            echo "halt=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "halt=true" >> "$GITHUB_OUTPUT"
+            echo "非交易日，本次不采集"
+          fi
+
       - name: 等收盘数据就绪（15:02 前不采）
         run: |
           TARGET=$(date -d "$(date +%Y-%m-%d) 15:02" +%s)
@@ -71,24 +84,24 @@ jobs:
           fi
 
       - name: 历史完整性护栏（缺失自动回填，修不好就拦住不发布）
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.cal.outputs.halt != 'true' && steps.guard.outputs.skip != 'true'
         run: |
           python3 scripts/guard_history.py
 
       - name: 采集行情
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.cal.outputs.halt != 'true' && steps.guard.outputs.skip != 'true'
         run: python3 collect.py
 
       - name: 生成前端增量因子包 tail.json
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.cal.outputs.halt != 'true' && steps.guard.outputs.skip != 'true'
         run: python3 scripts/make_tail.py
 
       - name: 校验数据（不合格则中止，不推送坏数据）
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.cal.outputs.halt != 'true' && steps.guard.outputs.skip != 'true'
         run: python3 verify_dataset.py
 
       - name: 保存数据快照
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.cal.outputs.halt != 'true' && steps.guard.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: data-backup
@@ -97,7 +110,7 @@ jobs:
           compression-level: 1
 
       - name: 提交数据（覆盖式，仓库体积恒定）
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.cal.outputs.halt != 'true' && steps.guard.outputs.skip != 'true'
         run: |
           set -e
           git config user.name  "github-actions[bot]"
