@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(BASE, "data")
+TMP  = os.path.join(BASE, "tmp")   # 即时行情只进临时目录，不入库
 UA = {"User-Agent": "Mozilla/5.0", "Referer": "https://finance.qq.com"}
 BATCH = 100
 WORKERS = 4
@@ -79,10 +80,11 @@ def main():
         "count": len(res),
         "q": res,
     }
-    os.makedirs(DATA, exist_ok=True)
-    with open(os.path.join(DATA, "live.json"), "w", encoding="utf-8") as f:
+    os.makedirs(TMP, exist_ok=True)
+    out = os.path.join(TMP, "live.json")      # ← 只落 tmp/，不进 data/，不提交
+    with open(out, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
-    size = os.path.getsize(os.path.join(DATA, "live.json")) / 1024
+    size = os.path.getsize(out) / 1024
     print(f"[完成] {len(res)} 只，{size:.0f} KB，用时 {time.time() - t0:.0f}s")
     ratio = len(res) / max(1, len(codes))
     if ratio < 0.6:
