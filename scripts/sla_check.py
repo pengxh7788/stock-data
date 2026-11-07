@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""收盘后 20 分钟 SLA 检查：15:20 前当日数据必须已发布。
+"""收盘后 20 分钟 SLA 检查：**必须在 15:20 前启动当日数据采集**。
 
-判定：
-  meta.json 的 date == 今天 → 已发布，看发布时刻是否 ≤ 15:20
-  否则 → 未发布；若已过 15:20，判定违约并补触发采集
+要求原文：收盘后 20 分钟之内必须"启动"保存数据，不要求 20 分钟内跑完。
+（不检查的话，有时会拖到几小时后才开始，数据就一直是昨天的。）
 
-环境变量：GH_TOKEN / OWNER_REPO（由 workflow 注入）
-退出码：0 达标 / 1 违约（Actions 会标红，便于发现）
+判定方式：查 collect.yml 今天的运行记录，看最早一次 run_started_at 是否 ≤ 15:20。
+  - 15:20 前已有运行启动 → ✅ 达标（跑没跑完不影响判定）
+  - 还没到 15:20 → 继续等
+  - 过了 15:20 仍无运行 → ❌ 违约 + 立即 dispatch 补跑
+
+环境变量：GH_TOKEN / OWNER_REPO（workflow 注入）
+退出码：0 达标 / 1 违约（Actions 标红，便于发现）
 """
 import json, os, sys, urllib.request
 from datetime import datetime, timedelta, timezone
 
 CST = timezone(timedelta(hours=8))
-SLA_MIN = 20          # 收盘后多少分钟内必须就绪
-CLOSE = (15, 0)
+SLA_MIN = 20
+CLOSE_H, CLOSE_M = 15, 0
 GH = os.environ.get("GH_TOKEN", "")
 REPO = os.environ.get("OWNER_REPO", "")
+WORKFLOW = "collect.yml"
 
 
 def api(path, data=None, method=None):
@@ -35,46 +40,48 @@ def main():
         print(f"[sla] {now:%Y-%m-%d} 周末，跳过")
         return 0
 
-    deadline = now.replace(hour=CLOSE[0], minute=CLOSE[1], second=0, microsecond=0) + timedelta(minutes=SLA_MIN)
-    try:
-        meta = json.load(open("data/meta.json", encoding="utf-8"))
-    except Exception as e:
-        print(f"[sla] 读不到 meta.json: {e}")
-        meta = {}
-    d = meta.get("date") or ""
+    close = now.replace(hour=CLOSE_H, minute=CLOSE_M, second=0, microsecond=0)
+    deadline = close + timedelta(minutes=SLA_MIN)
     today = now.strftime("%Y-%m-%d")
 
-    if d == today:
-        # 已发布：用最近一次成功运行的时间算发布时刻
-        published = None
-        try:
-            runs = api(f"/repos/{REPO}/actions/workflows/collect.yml/runs?per_page=10")
-            for r in runs.get("workflow_runs", []):
-                if r.get("conclusion") == "success" and r.get("updated_at"):
-                    t = datetime.fromisoformat(r["updated_at"].replace("Z", "+00:00")).astimezone(CST)
-                    if t.strftime("%Y-%m-%d") == today:
-                        published = t
-                        break
-        except Exception as e:
-            print(f"[sla] 查询运行记录失败: {e}")
-        if published:
-            mins = (published - published.replace(hour=CLOSE[0], minute=CLOSE[1], second=0, microsecond=0)).total_seconds() / 60
-            ok = mins <= SLA_MIN
-            print(f"[sla] 数据日期 {d} · 发布 {published:%H:%M} · 收盘后 {mins:.0f} 分钟 · {'✅ 达标' if ok else '❌ 超时'}")
-            return 0 if ok else 1
-        print(f"[sla] 数据日期 {d} 已是今天，但查不到发布时刻")
-        return 0
-
-    # 未发布
-    if now < deadline:
-        print(f"[sla] 数据日期 {d}（今天 {today} 还没出），现在 {now:%H:%M} 未到 {deadline:%H:%M}，继续等")
-        return 0
-
-    print(f"[sla] ❌ 已过 {deadline:%H:%M} 仍无当日数据（meta.date={d}）→ 补触发采集")
+    # 今天最早启动的那次运行
+    first = None
     try:
-        api(f"/repos/{REPO}/actions/workflows/collect.yml/dispatches",
+        runs = api(f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs?per_page=50")
+        for r in runs.get("workflow_runs", []):
+            t = r.get("run_started_at") or r.get("created_at")
+            if not t:
+                continue
+            st = datetime.fromisoformat(t.replace("Z", "+00:00")).astimezone(CST)
+            if st.strftime("%Y-%m-%d") != today:
+                continue
+            if first is None or st < first:
+                first = st
+    except Exception as e:
+        print(f"[sla] 查询运行记录失败: {e}")
+        return 0
+
+    if first:
+        delay = (first - close).total_seconds() / 60
+        tag = "✅ 达标" if delay <= SLA_MIN else "❌ 超时启动"
+        print(f"[sla] 今日最早启动 {first:%H:%M}（收盘后 {delay:.0f} 分钟）→ {tag}")
+        # 顺带记录数据是否已出，便于看进度，但不影响判定
+        try:
+            meta = json.load(open("data/meta.json", encoding="utf-8"))
+            print(f"[sla] 当前数据日期 {meta.get('date')}（完成与否不参与判定）")
+        except Exception:
+            pass
+        return 0 if delay <= SLA_MIN else 1
+
+    if now < deadline:
+        print(f"[sla] 现在 {now:%H:%M}，还没启动；截止 {deadline:%H:%M}，继续等")
+        return 0
+
+    print(f"[sla] ❌ 已过 {deadline:%H:%M} 仍未启动采集 → 立即 dispatch")
+    try:
+        api(f"/repos/{REPO}/actions/workflows/{WORKFLOW}/dispatches",
             {"ref": "main", "inputs": {"force": "1"}}, method="POST")
-        print("[sla] 已 dispatch collect.yml")
+        print("[sla] 已 dispatch collect.yml（强制）")
     except Exception as e:
         print(f"[sla] dispatch 失败: {e}")
     return 1
