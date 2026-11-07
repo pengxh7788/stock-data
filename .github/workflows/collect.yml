@@ -58,6 +58,11 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: 历史完整性护栏（缺失自动回填，修不好就拦住不发布）
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          python3 scripts/guard_history.py
+
       - name: 采集行情
         if: steps.guard.outputs.skip != 'true'
         run: python3 collect.py
