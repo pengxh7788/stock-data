@@ -67,6 +67,10 @@ jobs:
         if: steps.guard.outputs.skip != 'true'
         run: python3 collect.py
 
+      - name: 生成前端增量因子包 tail.json
+        if: steps.guard.outputs.skip != 'true'
+        run: python3 scripts/make_tail.py
+
       - name: 校验数据（不合格则中止，不推送坏数据）
         if: steps.guard.outputs.skip != 'true'
         run: python3 verify_dataset.py
