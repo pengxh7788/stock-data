@@ -16,7 +16,8 @@ from datetime import datetime, timezone, timedelta
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(BASE, "data")
-LIVE = os.path.join(DATA, "live.json")
+LIVE = os.path.join(BASE, "tmp", "live.json")     # 优先：盘中临时文件
+LIVE_OLD = os.path.join(DATA, "live.json")        # 兼容旧路径
 BUCKETS = os.path.join(DATA, "buckets")
 KEEP = 2                     # 只保留最近 2 个桶
 CST = timezone(timedelta(hours=8))
@@ -27,10 +28,11 @@ def floor_half_hour(dt):
 
 
 def main():
-    if not os.path.exists(LIVE):
+    src = LIVE if os.path.exists(LIVE) else (LIVE_OLD if os.path.exists(LIVE_OLD) else None)
+    if not src:
         print("[bucket] 没有 live.json，跳过")
         return 0
-    live = json.load(open(LIVE, encoding="utf-8"))
+    live = json.load(open(src, encoding="utf-8"))
     q = live.get("q") or {}
     if not q:
         print("[bucket] live.json 里没有数据，跳过")
