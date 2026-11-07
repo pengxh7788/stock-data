@@ -46,6 +46,7 @@ jobs:
 
           if [ "${{ github.event.inputs.once }}" = "1" ]; then
             python3 live.py --force
+            python3 scripts/make_bucket.py || echo "桶落盘失败，不影响主流程"
             git add -A data
             git commit -qm "live once $(date +%H:%M)" || true
             git push -q origin HEAD:live
@@ -58,6 +59,7 @@ jobs:
 
           while [ "$(date +%s)" -lt "$END" ]; do
             python3 live.py || echo "本轮失败，继续下一轮"
+            python3 scripts/make_bucket.py || echo "桶落盘失败，不影响主流程"
 
             if ! git diff --quiet -- data; then
               git add -A data
