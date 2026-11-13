@@ -1,0 +1,9 @@
+{
+ "checkedAt": "2026-11-13T15:17:42",
+ "total": 5556,
+ "threshold": 0.05,
+ "badDatesBefore": [],
+ "repairedCells": 0,
+ "badDatesAfter": [],
+ "ok": true
+}

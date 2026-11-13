@@ -1,0 +1,83 @@
+name: backtest
+
+# 每周跑一次规则回测，产出 live/data/backtest.json
+# APP 端只读这个 json，不再在手机上算指标。
+on:
+  schedule:
+    - cron: '0 12 * * 6'      # 周六 20:00 北京时间
+  workflow_dispatch:
+    inputs:
+      days:
+        description: '回测交易日数（默认 500）'
+        required: false
+        default: '500'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: backtest
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: 检出 main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 取历史行情（history 分支的 kline/，每股 250 根）
+        run: |
+          set -e
+          git fetch --depth=1 origin history
+          mkdir -p data
+          git archive origin/history kline | tar -x -C data
+          echo "个股文件数: $(ls data/kline | wc -l)"
+
+      - name: 跑回测（纯标准库，无需 pip）
+        env:
+          DAYS: ${{ github.event.inputs.days || '500' }}
+        run: |
+          set -e
+          python3 scripts/backtest.py --mode kline --data data/kline --out out/backtest.json --days "$DAYS"
+          python3 - <<'PY'
+          import json
+          d = json.load(open('out/backtest.json'))
+          print('window', d['window'])
+          print('benchmark', d['benchmark'])
+          for r in d['rules']:
+              s = r['stats']
+              print(f"{r['id']:<20} n={s.get('n',0):>6} win={s.get('win',0):>5} avg={s.get('avg',0):>7} gate={r.get('gate',{}).get('reason','')}")
+          PY
+
+      - name: 上传产物（失败也能拿到）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-${{ github.run_id }}
+          path: out/backtest.json
+          if-no-files-found: warn
+
+      - name: 发布到 live 分支
+        if: success()
+        run: |
+          set -e
+          git config user.name  "backtest-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git fetch --depth=1 origin live
+          rm -rf ../pub
+          git worktree add ../pub origin/live
+          mkdir -p ../pub/data
+          cp out/backtest.json ../pub/data/backtest.json
+          cd ../pub
+          git add data/backtest.json
+          git commit -qm "backtest $(date -u +%F)" || { echo "无变化，跳过"; exit 0; }
+          git push origin HEAD:live \
+            || (git pull -q --rebase -X ours origin live && git push origin HEAD:live)
