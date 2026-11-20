@@ -1,0 +1,83 @@
+name: live-quotes
+
+# 盘中盯盘任务：一次启动、内部每 30 分钟抓一个桶，直到收盘。
+# 不依赖 GitHub 的 cron 准点（它的调度经常延迟/丢），只在开盘前启动一次。
+on:
+  schedule:
+    - cron: '15 1 * * 1-5'    # 北京 09:15 启动
+    - cron: '50 4 * * 1-5'    # 北京 12:50 兜底启动（上午任务挂掉时补上）
+    - cron: '30 6 * * 1-5'    # 北京 14:30 兜底启动（下午任务中途挂掉时补上）
+  workflow_dispatch:
+    inputs:
+      once:
+        description: '只抓一次（忽略交易时段，用于验证）'
+        required: false
+        default: '0'
+
+concurrency:
+  group: live-quotes
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 380
+    steps:
+      - name: 检出 live 分支
+        uses: actions/checkout@v4
+        with:
+          ref: live
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 每 30 分钟抓一桶，直到收盘
+        env:
+          TZ: Asia/Shanghai
+        run: |
+          set -e
+          git config user.name  "live-bot"
+          git config user.email "actions@github.com"
+
+          if [ "${{ github.event.inputs.once }}" = "1" ]; then
+            python3 live.py --force
+            python3 scripts/make_bucket.py || echo "桶落盘失败，不影响主流程"
+            git add -A data
+            git commit -qm "live once $(date +%H:%M)" || true
+            git push -q origin HEAD:live
+            echo "单次抓取完成"
+            exit 0
+          fi
+
+          if ! python3 scripts/trading_day.py; then
+            echo "非交易日，盘中桶任务直接结束"
+            exit 0
+          fi
+
+          END=$(date -d "$(date +%Y-%m-%d) 15:06" +%s)
+          echo "开始 $(date +%H:%M)，计划到 15:06 结束"
+
+          while [ "$(date +%s)" -lt "$END" ]; do
+            python3 live.py || echo "本轮失败，继续下一轮"
+            python3 scripts/make_bucket.py || echo "桶落盘失败，不影响主流程"
+
+            if ! git diff --quiet -- data; then
+              git add -A data
+              git commit -qm "live $(date +%H:%M)" || true
+              git push -q origin HEAD:live \
+                || (git pull -q --rebase -X ours origin live && git push -q origin HEAD:live) \
+                || echo "push 失败，下一轮重试"
+            fi
+
+            NOW=$(date +%s)
+            NEXT=$(( (NOW / 1800 + 1) * 1800 ))
+            SLEEP=$(( NEXT - NOW + 5 ))
+            echo "下一轮 $((SLEEP / 60)) 分钟后"
+            sleep "$SLEEP"
+          done
+          echo "收盘，任务结束"

@@ -1,0 +1,18 @@
+Traceback (most recent call last):
+  File "/home/runner/work/stock-data/stock-data/collect.py", line 2207, in <module>
+    main()
+  File "/home/runner/work/stock-data/stock-data/collect.py", line 1457, in main
+    codes = get_universe()
+            ^^^^^^^^^^^^^^
+  File "/home/runner/work/stock-data/stock-data/collect.py", line 218, in get_universe
+    raw = http_get(UNIVERSE_URL, referer="https://www.cninfo.com.cn/")
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/stock-data/stock-data/collect.py", line 149, in http_get
+    return r.read()
+           ^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.11.18/x64/lib/python3.11/http/client.py", line 504, in read
+    s = self._safe_read(self.length)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.11.18/x64/lib/python3.11/http/client.py", line 667, in _safe_read
+    raise IncompleteRead(data, amt - len(data))
+http.client.IncompleteRead: IncompleteRead(544022 bytes read, 48854 more expected)
